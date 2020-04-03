@@ -1,0 +1,303 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "appName": {
+           "type": "string",
+           "metadata": {
+                "description": "appName prefix"
+            }
+        },
+        "aspSize": {
+           "type": "object",
+           "metadata": {
+                "description": "Procing tier for App Service Plan"
+            }
+        },
+        "psqlPassword": {
+           "type": "securestring",
+           "metadata": {
+                "description": "Password for PostgreSQL admin account"
+            }
+        },
+        "webAppNames": {
+           "type": "array",
+           "metadata": {
+                "description": "Names for databases to created in the PostgreSQL server"
+            }
+        },
+        "appGWSize": {
+           "type": "object",
+           "metadata": {
+                "description": "Application Gateway Sizing"
+            }
+        },
+        "appGWNetworkConfig": {
+           "type": "object",
+           "metadata": {
+                "description": "VNet definition for AppGW [Required]"
+            }
+        }
+    },
+    "variables": {
+        "aspConfig": {
+            "name":"[concat('asp-',parameters('appName'))]",
+            "location":"centralUS",
+            "aspIdRef": "[resourceId('Microsoft.Web/serverfarms', concat('asp-',parameters('appName')))]"
+        },
+        "WebAppConfig":[
+            {
+                "name":"[concat('wa-', parameters('appName'),'-')]"
+            },
+            {
+                "name":"[concat('wa-', parameters('appName'),'-')]"
+            }
+            
+        ],
+        "psqlServer":{
+            "name":"[concat('psql-', parameters('appName'))]",
+            "location": "EastUS2",
+            "skuName":"GP_Gen5_2",
+            "skuTier":"GeneralPurpose",
+            "version": 9.5,
+            "backupRetnetion": "30"
+        },
+        "publicIP": {
+            "name":"[concat('pip-', parameters('appName'))]",
+            "domainNameLable": "[concat('hbl-', parameters('appName'), '-app')]",
+            "idRef":"[resourceId('Microsoft.Network/publicIPAddresses',concat('pip-', parameters('appName')))]"
+        },
+        "appGW": {
+            "name":"[concat('appgw-', parameters('appName'))]",
+            "idRef": "[resourceId('Microsoft.Network/applicationGateways',concat('appgw-', parameters('appName')))]"
+        },
+        "appGWNetwork": {
+            "name":"[concat('vnet-', parameters('appName'),'-',resourceGroup().location)]",
+            "subnetName":"appGWBacked",
+            "vnetIdRef":"[resourceId('Microsoft.Network/virtualNetworks', concat('vnet-', parameters('appName'),'-',resourceGroup().location))]",
+            "subnetIdRef":"[resourceId('Microsoft.Network/virtualNetworks/subnets', concat('vnet-', parameters('appName'),'-',resourceGroup().location), 'appGWBacked')]"
+        },
+        "monitoring": {
+            "appInsightsName": "[concat('appIn-', parameters('appName'))]"
+        }
+    },
+    "resources": [
+        {
+            "name": "[variables('aspConfig').name]",
+            "type": "Microsoft.Web/serverfarms",
+            "apiVersion": "2019-08-01",
+            "location": "[variables('aspConfig').location]",
+            "tags": {},
+            "properties": {
+                "perSiteScaling": "true"
+            },
+            "sku": {
+                "name": "[parameters('aspSize').sku]"
+            }
+        },
+        {
+            "name": "[parameters('webAppNames')[copyIndex()].name]",
+            "type": "Microsoft.Web/sites",
+            "apiVersion": "2018-11-01",
+            "location": "[variables('aspConfig').location]",
+            "tags": {
+            },
+            "dependsOn": [
+                "[resourceId('Microsoft.Web/serverfarms', variables('aspConfig').name)]",
+                "[variables('monitoring').appInsightsName]"
+            ],
+            "copy":{
+                "name":"appLoop",
+                "count":"[length(parameters('webAppNames'))]"
+            },
+            "properties": {
+                "name": "[concat('wa-',parameters('appName'),parameters('webAppNames')[copyIndex()].Name)]",
+                "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', variables('aspConfig').name)]"
+            }
+        },
+        {
+            "name": "[variables('psqlServer').name]",
+            "type": "Microsoft.DBforPostgreSQL/servers",
+            "apiVersion": "2017-12-01",
+            "location":"[variables('psqlServer').location]",
+            "comments": "Alternate site read-replica PostgreSQL instance",
+            "dependsOn":[
+            ],
+            "sku":{
+                "name":"[variables('psqlServer').skuName]",
+                "tier":"[variables('psqlServer').skuTier]"                
+            },
+            "properties":{
+                "version":"[variables('psqlServer').version]",
+                "sslEnforcement":"Enabled",
+                "administratorLogin":"ladmin",
+                "administratorLoginPassword":"[parameters('psqlPassword')]", 
+                "createMode":"default"         
+            }
+        },
+        {
+            "name": "[concat(variables('psqlServer').name ,'/',parameters('webAppNames')[copyIndex()].name)]",
+            "type": "Microsoft.DBforPostgreSQL/servers/databases",
+            "apiVersion": "2017-12-01",
+            "location":"[variables('psqlServer').location]",
+            "dependsOn":[
+                "[variables('psqlServer').name]"
+            ],
+            "copy":{
+                "name":"psqlDBLoop",
+                "count":"[length(parameters('webAppNames'))]"
+            },
+            "properties": {
+                "charset": "utf8",
+                "collation": "English_United States.1252"
+            }            
+        },
+        {
+            "name": "[variables('publicIP').name]",
+            "type": "Microsoft.Network/publicIPAddresses",
+            "apiVersion": "2018-08-01",
+            "location": "[resourceGroup().location]",
+            "tags": {},
+            "properties": {
+                "publicIPAllocationMethod": "Dynamic",
+                "dnsSettings": {
+                    "domainNameLabel": "[variables('publicIP').domainNameLable]"
+                }
+            }
+        },
+        {
+            "name": "[variables('appGWNetwork').name]",
+            "type": "Microsoft.Network/virtualNetworks",
+            "apiVersion": "2018-08-01",
+            "location": "[resourceGroup().location]",
+            "tags": {},
+            "properties": {
+                "addressSpace": {
+                    "addressPrefixes": [
+                        "[parameters('appGWNetworkConfig').addressPrefix]"
+                    ]
+                },
+                "subnets": [
+                    {
+                        "name": "[variables('appGWNetwork').subnetName]",
+                        "properties": {
+                            "addressPrefix": "[parameters('appGWNetworkConfig').appGWSubnetPrefix]"
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            "name": "[variables('appGW').name]",
+            "type": "Microsoft.Network/applicationGateways",
+            "apiVersion": "2019-09-01",
+            "location": "[resourceGroup().location]",
+            "dependsOn": [
+                "[concat('Microsoft.Network/publicIPAddresses/', variables('publicIP').name)]",
+                "[variables('aspConfig').name]",
+                "appLoop",
+                "[variables('appGWNetwork').name]"
+            ],
+            "properties": {
+                "sku": {
+                "name": "[parameters('appGWSize').sku]",
+                "tier": "[parameters('appGWSize').tier]",
+                "capacity": "[parameters('appGWSize').capacity]"
+                },
+                "gatewayIPConfigurations": [
+                {
+                    "name": "appGatewayIpConfig",
+                    "properties": {
+                    "subnet": {
+                        "id": "[variables('appGWNetwork').subnetIdRef]"
+                    }
+                    }
+                }
+                ],                
+                "frontendIPConfigurations": [
+                {
+                    "name": "appGatewayFrontendIP",
+                    "properties": {
+                    "PublicIPAddress": {
+                        "id": "[variables('publicIP').idRef]"
+                    }
+                    }
+                }
+                ],
+                "frontendPorts": [
+                {
+                    "name": "appGatewayFrontendPort",
+                    "properties": {
+                    "Port": 80
+                    }
+                }
+                ],
+                "backendAddressPools": [
+                {
+                    "name": "appGatewayBackendPool",
+                    "properties": {
+                    "BackendAddresses": [
+                    ]
+                    }
+                }
+                ],
+                "backendHttpSettingsCollection": [
+                    {
+                        "name": "appGatewayBackendHttpSettings",
+                        "properties": {
+                        "Port": 80,
+                        "Protocol": "Http",
+                        "CookieBasedAffinity": "Disabled"
+                        }
+                    }
+                ],
+                "httpListeners": [
+                    {
+                        "name": "appGatewayHttpListener",
+                        "properties": {
+                        "FrontendIPConfiguration": {
+                            "Id": "[concat(variables('appGW').idRef, '/frontendIPConfigurations/appGatewayFrontendIP')]"
+                        },
+                        "FrontendPort": {
+                            "Id": "[concat(variables('appGW').idRef, '/frontendPorts/appGatewayFrontendPort')]"
+                        },
+                        "Protocol": "Http",
+                        "SslCertificate": null
+                        }
+                    }
+                ],
+                "requestRoutingRules": [
+                    {
+                        "Name": "rule1",
+                        "properties": {
+                        "RuleType": "Basic",
+                        "httpListener": {
+                            "id": "[concat(variables('appGW').idRef, '/httpListeners/appGatewayHttpListener')]"
+                        },
+                        "backendAddressPool": {
+                            "id": "[concat(variables('appGW').idRef, '/backendAddressPools/appGatewayBackendPool')]"
+                        },
+                        "backendHttpSettings": {
+                            "id": "[concat(variables('appGW').idRef, '/backendHttpSettingsCollection/appGatewayBackendHttpSettings')]"
+                        }
+                        }
+                    }
+                ]                                                              
+            }
+        },
+        {
+            "name": "[variables('monitoring').appInsightsName]",
+            "kind":"web",
+            "type": "Microsoft.Insights/components",
+            "apiVersion": "2015-05-01",
+            "location": "[variables('aspConfig').location]",
+            "tags": {
+            },
+            "properties": {
+                "application_Type": "web"
+            }
+        }      
+    ],
+    "outputs": {},
+    "functions": []
+}

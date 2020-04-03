@@ -1,0 +1,36 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "appName": {
+            "value": ""
+        },
+        "appSize": {
+            "value": {
+                "sku":"51",
+                "workerSize":"0"
+            }
+        },
+        "psqlPassword": {
+            "reference": {
+                "keyVault": {
+                    "id": "<KeyVault Resource ID>"
+                },
+                "secretName": "<SecretName>"
+            }
+        },
+        "appGWSize": {
+            "value": {
+                "sku":"Standard_Small",
+                "tier":"Standard",
+                "capacity":"2"
+            }
+        },
+        "appGWNetworkConfig": {
+            "value": {
+                "addressPrefix":"10.50.0.0/16",
+                "appGWSubnetPrefix":"10.50.1.0/24"
+            }
+        }
+    }
+}
